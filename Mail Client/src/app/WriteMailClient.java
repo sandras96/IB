@@ -124,7 +124,7 @@ public class WriteMailClient extends MailClient {
  			aesCipherEnc.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec2);
  			
  			
- 	//		String encryptedAESKeyString = encryptAESKey(encodedKey, publicKey);
+ 			String encryptedAESKeyString = encryptAESKey(encodedKey, publicKey);
  			
  			
 
@@ -159,12 +159,12 @@ public class WriteMailClient extends MailClient {
 		
 	}
 
-/*	// Encrypt AES private Key using RSA public key
+	// Encrypt AES private Key using RSA public key
 	private static String encryptAESKey(String encryptedAESKey, PublicKey publicKey) throws Exception {
         Cipher cipher = Cipher.getInstance("RSA");
         cipher.init(Cipher.ENCRYPT_MODE, publicKey);
         return Base64.encodeToString(cipher.doFinal(encryptedAESKey.getBytes()));
-    }*/
+    }
 	
 
 }
