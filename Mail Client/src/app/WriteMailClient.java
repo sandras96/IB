@@ -35,33 +35,32 @@ import util.Base64;
 
 public class WriteMailClient extends MailClient {
 
-	private static final String KEY_FILE = "./data/session.key";
-	private static final String IV1_FILE = "./data/iv1.bin";
-	private static final String IV2_FILE = "./data/iv2.bin";
-	private static short BLOCK_SIZE = 16;
+	/*
+	 * private static final String KEY_FILE = "./data/session.key";
+	 * private static final String IV1_FILE = "./data/iv1.bin"; 
+	 * private static final String IV2_FILE = "./data/iv2.bin";
+	 * private static short BLOCK_SIZE = 16;
+	 */
 	private static final String USER_A_JKS = "./data/usera.jks";
-	private static final String USER_B_JKS = "./data/userb.jks";
 	private static final String userBAlias = "userb";
-	private static final String userAAlias = "usera";
 	private static final String userBPass = "b";
 	private static final String userAPass = "a";
-	
-	
-	//kreiranje kljuca
-		private static SecretKey generateKey() {
-	        try {
-				//generator para kljuceva za AES algoritam
-				KeyGenerator   keyGen = KeyGenerator.getInstance("AES"); 
-				//generise kljuc za AES, defaultne velicine od 128 bita
-				SecretKey secretKey = keyGen.generateKey();
-				return secretKey;
-				
-	        } catch (NoSuchAlgorithmException e) {
-				e.printStackTrace();
-			}
-	        
-	        return null;
+
+	// kreiranje kljuca
+	private static SecretKey generateKey() {
+		try {
+			// generator para kljuceva za AES algoritam
+			KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+			// generise kljuc za AES, defaultne velicine od 128 bita
+			SecretKey secretKey = keyGen.generateKey();
+			return secretKey;
+
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
 		}
+
+		return null;
+	}
 
 	public static void main(String[] args) {
 
@@ -85,57 +84,52 @@ public class WriteMailClient extends MailClient {
 			String compressedSubject = Base64.encodeToString(GzipUtil.compress(subject));
 			String compressedText = Base64.encodeToString(GzipUtil.compress(text));
 
-			 //generate Key
-            SecretKey secretKey = generateKey();
-            
-            String encodedKey = Base64.encodeToString(secretKey.getEncoded());
-            
-            //javni kljuc korisnika B
-            PublicKey publicKey = getPublicKey();
+			// generate Key
+			SecretKey secretKey = generateKey();
+
+			String encodedKey = Base64.encodeToString(secretKey.getEncoded());
+
+			// javni kljuc korisnika B
+			PublicKey publicKey = getPublicKey();
 
 			// klasa za sifrovanje
-            Cipher aesCipherEnc = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            
-            
+			Cipher aesCipherEnc = Cipher.getInstance("AES/CBC/PKCS5Padding");
+
 			// inicijalizacija za sifrovanje
-        	IvParameterSpec ivParameterSpec1 = IVHelper.createIV();
- 			aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey, ivParameterSpec1);
- 			
- 			
- 			//sifrovanje
- 			byte[] ciphertext = aesCipherEnc.doFinal(compressedText.getBytes());
- 			String ciphertextStr = Base64.encodeToString(ciphertext);
- 			System.out.println("Kriptovan tekst: " + ciphertextStr);
- 			
+			IvParameterSpec ivParameterSpec1 = IVHelper.createIV();
+			aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey, ivParameterSpec1);
 
- 			//inicijalizacija za dekriptovanje
- 			aesCipherEnc.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec1);
- 			
- 			 //inicijalizacija za sifrovanje 
- 			IvParameterSpec ivParameterSpec2 = IVHelper.createIV();
- 			aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey, ivParameterSpec2);
- 			
- 			//sifrovanje
- 			byte[] ciphersubject = aesCipherEnc.doFinal(compressedSubject.getBytes());
- 			String ciphersubjectStr = Base64.encodeToString(ciphersubject);
- 			System.out.println("Kriptovan subject: " + ciphersubjectStr);
- 			
- 			//inicijalizacija za dekriptovanje
- 			aesCipherEnc.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec2);
- 			
- 			
- 			String encryptedAESKeyString = encryptAESKey(encodedKey, publicKey);
- 			
- 			
+			// sifrovanje
+			byte[] ciphertext = aesCipherEnc.doFinal(compressedText.getBytes());
+			String ciphertextStr = Base64.encodeToString(ciphertext);
+			System.out.println("Kriptovan tekst: " + ciphertextStr);
 
-			// snimanje kljuca i IV
-			JavaUtils.writeBytesToFilename(KEY_FILE, secretKey.getEncoded());
-			JavaUtils.writeBytesToFilename(IV1_FILE, ivParameterSpec1.getIV());
-			JavaUtils.writeBytesToFilename(IV2_FILE, ivParameterSpec2.getIV());
-			
-			
+			// inicijalizacija za sifrovanje
+			IvParameterSpec ivParameterSpec2 = IVHelper.createIV();
+			aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey, ivParameterSpec2);
 
-			MimeMessage mimeMessage = MailHelper.createMimeMessage(reciever, ciphersubjectStr, ciphertextStr);
+			// sifrovanje
+			byte[] ciphersubject = aesCipherEnc.doFinal(compressedSubject.getBytes());
+			String ciphersubjectStr = Base64.encodeToString(ciphersubject);
+			System.out.println("Kriptovan subject: " + ciphersubjectStr);
+
+			// enkripcija privatnog kljuca javnim kljucem
+			String encryptedAESKeyString = encryptAESKey(encodedKey, publicKey);
+
+			// String message = ciphersubjectStr + ciphertextStr;
+
+			MailBody mailBody = new MailBody(ciphertextStr, Base64.encodeToString(ivParameterSpec1.getIV()),
+												Base64.encodeToString(ivParameterSpec2.getIV()), encryptedAESKeyString);
+			String mailBody1 = mailBody.toCSV();
+
+			/*
+			 * // snimanje kljuca i IV JavaUtils.writeBytesToFilename(KEY_FILE,
+			 * secretKey.getEncoded()); JavaUtils.writeBytesToFilename(IV1_FILE,
+			 * ivParameterSpec1.getIV()); JavaUtils.writeBytesToFilename(IV2_FILE,
+			 * ivParameterSpec2.getIV());
+			 */
+
+			MimeMessage mimeMessage = MailHelper.createMimeMessage(reciever, ciphersubjectStr, mailBody1);
 			MailWritter.sendMessage(service, "me", mimeMessage);
 
 		} catch (Exception e) {
@@ -143,8 +137,8 @@ public class WriteMailClient extends MailClient {
 		}
 
 	}
-	
-	// iz usera.jks preuzeti sertifikat i javni ključ korisnika B
+
+	// Iz usera.jks preuzeti sertifikat i javni ključ korisnika B
 	private static PublicKey getPublicKey() {
 		KeyStoreReader ksr = new KeyStoreReader();
 		try {
@@ -153,18 +147,17 @@ public class WriteMailClient extends MailClient {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
-		
+
 		PublicKey pbk = ksr.readPublicKey();
 		return pbk;
-		
+
 	}
 
 	// Encrypt AES private Key using RSA public key
 	private static String encryptAESKey(String encryptedAESKey, PublicKey publicKey) throws Exception {
-        Cipher cipher = Cipher.getInstance("RSA");
-        cipher.init(Cipher.ENCRYPT_MODE, publicKey);
-        return Base64.encodeToString(cipher.doFinal(encryptedAESKey.getBytes()));
-    }
-	
+		Cipher cipher = Cipher.getInstance("RSA");
+		cipher.init(Cipher.ENCRYPT_MODE, publicKey);
+		return Base64.encodeToString(cipher.doFinal(encryptedAESKey.getBytes()));
+	}
 
 }
