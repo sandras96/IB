@@ -6,6 +6,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.StringReader;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.KeyStore;
@@ -14,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.security.Security;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
 import java.text.ParseException;
@@ -29,8 +31,18 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.mail.MessagingException;
 import javax.mail.internet.MimeMessage;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+
+import org.apache.xml.security.encryption.XMLCipher;
+import org.apache.xml.security.encryption.XMLEncryptionException;
 
 import org.apache.xml.security.utils.JavaUtils;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 import com.google.api.services.gmail.Gmail;
 import com.google.api.services.gmail.model.Message;
@@ -56,6 +68,12 @@ public class ReadMailClient extends MailClient {
 	private static final String userBPass = "b";
 	public static long PAGE_SIZE = 3;
 	public static boolean ONLY_FIRST_PAGE = true;
+	
+	static {
+		//staticka inicijalizacija
+        Security.addProvider(new BouncyCastleProvider());
+        org.apache.xml.security.Init.init();
+	}
 
 	public static void main(String[] args) throws IOException {
 		// Build a new authorized API client service.
@@ -95,53 +113,96 @@ public class ReadMailClient extends MailClient {
 
 		@SuppressWarnings("unused")
 		MimeMessage chosenMessage = mimeMessages.get(answer);
-
-		String mailBodyStr;
+		
 		try {
 			
-			// Izvlacenje data iz MailBody 
+			//izvlacenje teksta mail-a koji je trenutno u obliku stringa
+			String xmlAsString = MailHelper.getText(chosenMessage);
 			
-			mailBodyStr = MailHelper.getText(chosenMessage);
-			MailBody mailBody = new MailBody(mailBodyStr);
+			//kreiranje XML dokumenta na osnovu stringa
+			Document doc = createXMlDocument(xmlAsString);
 			
-			String secretKey1 = mailBody.getEncKey();
-			String ivParameter1 = mailBody.getIV1();
-			String ivParameter2 = mailBody.getIV2();
-			String message = mailBody.getEncMessage();
+			// citanje keystore-a kako bi se izvukao sertifikat primaoca
+			// i kako bi se dobio njegov tajni kljuc
+			PrivateKey privateKey = getPrivateKey();
+			
+			//desifrovanje tajnog (session) kljuca pomocu privatnog kljuca
+			XMLCipher xmlCipher = XMLCipher.getInstance();
+			xmlCipher.init(XMLCipher.DECRYPT_MODE, null);
+			
+			//Key encryption key, postavljanje privatnog kljuca koji dekriptuje tajni kljuc koji odgovara simetricnom algoritmu
+			xmlCipher.setKEK(privateKey);
+			
+			//trazi se prvi EncryptedData element i izvrsi dekriptovanje
+			NodeList encDataList = doc.getElementsByTagNameNS("http://www.w3.org/2001/04/xmlenc#", "EncryptedData");
+			Element encData = (Element) encDataList.item(0);
+			
+			//dekriptuje se
+			//pri cemu se prvo dekriptuje tajni kljuc, pa onda njime podaci
+			xmlCipher.doFinal(doc, encData); 
+			
 
-			// Dekripcija tajnog kljuca privatnim kljucem
-			String decryptSecretKey = decryptAESKey(secretKey1, getPrivateKey());
-			SecretKey secretKey = new SecretKeySpec(Base64.decode(decryptSecretKey), "AES");
-
-			Cipher aesCipherDec = Cipher.getInstance("AES/CBC/PKCS5Padding");
-
-			byte[] iv1 = Base64.decode(ivParameter1);
-			IvParameterSpec ivParameterSpec1 = new IvParameterSpec(iv1);
-
-			// inicijalizacija za dekriptovanje
-			aesCipherDec.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec1);
-
-			String receivedBodyTxt = new String(aesCipherDec.doFinal(Base64.decode(message)));
-			String decompressedBodyText = GzipUtil.decompress(Base64.decode(receivedBodyTxt));
-			System.out.println("Body text: " + decompressedBodyText);
-
-			byte[] iv2 = Base64.decode(ivParameter2);
-			IvParameterSpec ivParameterSpec2 = new IvParameterSpec(iv2);
-
-			// inicijalizacija za dekriptovanje
-			aesCipherDec.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec2);
-
-			String decryptedSubjectTxt = new String(aesCipherDec.doFinal(Base64.decode(chosenMessage.getSubject())));
-			String decompressedSubjectTxt = GzipUtil.decompress(Base64.decode(decryptedSubjectTxt));
-			System.out.println("Subject text: " + new String(decompressedSubjectTxt));
-
+			String msg = doc.getElementsByTagName("mailSubject").item(0).getTextContent();
+			System.out.println("\nSubject text: " + (msg.split("\n"))[0]);
+			String msg1 = doc.getElementsByTagName("mailBody").item(0).getTextContent();
+			System.out.println("Body text: " + (msg1.split("\n"))[0]);
+			
 		} catch (MessagingException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (XMLEncryptionException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		} catch (Exception e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
+
+		/*
+		 * String mailBodyStr; try {
+		 * 
+		 * // Izvlacenje data iz MailBody
+		 * 
+		 * mailBodyStr = MailHelper.getText(chosenMessage); MailBody mailBody = new
+		 * MailBody(mailBodyStr);
+		 * 
+		 * String secretKey1 = mailBody.getEncKey(); String ivParameter1 =
+		 * mailBody.getIV1(); String ivParameter2 = mailBody.getIV2(); String message =
+		 * mailBody.getEncMessage();
+		 * 
+		 * // Dekripcija tajnog kljuca privatnim kljucem String decryptSecretKey =
+		 * decryptAESKey(secretKey1, getPrivateKey()); SecretKey secretKey = new
+		 * SecretKeySpec(Base64.decode(decryptSecretKey), "AES");
+		 * 
+		 * Cipher aesCipherDec = Cipher.getInstance("AES/CBC/PKCS5Padding");
+		 * 
+		 * byte[] iv1 = Base64.decode(ivParameter1); IvParameterSpec ivParameterSpec1 =
+		 * new IvParameterSpec(iv1);
+		 * 
+		 * // inicijalizacija za dekriptovanje aesCipherDec.init(Cipher.DECRYPT_MODE,
+		 * secretKey, ivParameterSpec1);
+		 * 
+		 * String receivedBodyTxt = new
+		 * String(aesCipherDec.doFinal(Base64.decode(message))); String
+		 * decompressedBodyText = GzipUtil.decompress(Base64.decode(receivedBodyTxt));
+		 * System.out.println("Body text: " + decompressedBodyText);
+		 * 
+		 * byte[] iv2 = Base64.decode(ivParameter2); IvParameterSpec ivParameterSpec2 =
+		 * new IvParameterSpec(iv2);
+		 * 
+		 * // inicijalizacija za dekriptovanje aesCipherDec.init(Cipher.DECRYPT_MODE,
+		 * secretKey, ivParameterSpec2);
+		 * 
+		 * String decryptedSubjectTxt = new
+		 * String(aesCipherDec.doFinal(Base64.decode(chosenMessage.getSubject())));
+		 * String decompressedSubjectTxt =
+		 * GzipUtil.decompress(Base64.decode(decryptedSubjectTxt));
+		 * System.out.println("Subject text: " + new String(decompressedSubjectTxt));
+		 * 
+		 * } catch (MessagingException e) { // TODO Auto-generated catch block
+		 * e.printStackTrace(); } catch (Exception e) { // TODO Auto-generated catch
+		 * block e.printStackTrace(); }
+		 */
 
 		/*
 		 * // TODO: Decrypt and decompress the message.
@@ -230,5 +291,20 @@ public class ReadMailClient extends MailClient {
 		cipher.init(Cipher.DECRYPT_MODE, privateKey);
 		return new String(cipher.doFinal(Base64.decode(encryptedAESKey)));
 	}
+	
+	//kreiranje dokumenta od xml fajla koji je kao string
+		private static Document createXMlDocument(String xmlAsString){
+			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();  
+			factory.setNamespaceAware(true);
+			DocumentBuilder builder;  
+			Document doc = null;
+			try {  
+			    builder = factory.newDocumentBuilder();  
+			    doc = builder.parse(new InputSource(new StringReader(xmlAsString)));  
+			} catch (Exception e) {  
+			    e.printStackTrace();  
+			} 
+			return doc;
+		}
 
 }
