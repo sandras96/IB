@@ -18,6 +18,7 @@ import java.security.PublicKey;
 import java.security.Security;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +37,12 @@ import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.apache.xml.security.encryption.XMLCipher;
 import org.apache.xml.security.encryption.XMLEncryptionException;
-
+import org.apache.xml.security.exceptions.XMLSecurityException;
+import org.apache.xml.security.keys.KeyInfo;
+import org.apache.xml.security.keys.keyresolver.implementations.RSAKeyValueResolver;
+import org.apache.xml.security.keys.keyresolver.implementations.X509CertificateResolver;
+import org.apache.xml.security.signature.XMLSignature;
+import org.apache.xml.security.signature.XMLSignatureException;
 import org.apache.xml.security.utils.JavaUtils;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.w3c.dom.Document;
@@ -64,6 +70,7 @@ public class ReadMailClient extends MailClient {
 	 */
 
 	private static final String USER_B_JKS = "./data/userb.jks";
+	private static final String userAAlias = "usera";
 	private static final String userBAlias = "userb";
 	private static final String userBPass = "b";
 	public static long PAGE_SIZE = 3;
@@ -141,6 +148,9 @@ public class ReadMailClient extends MailClient {
 			//pri cemu se prvo dekriptuje tajni kljuc, pa onda njime podaci
 			xmlCipher.doFinal(doc, encData); 
 			
+			//provera potpisa
+			 ReadMailClient verify = new ReadMailClient(); 
+			 verify.verify(doc);
 
 			String msg = doc.getElementsByTagName("mailSubject").item(0).getTextContent();
 			System.out.println("\nSubject text: " + (msg.split("\n"))[0]);
@@ -306,5 +316,91 @@ public class ReadMailClient extends MailClient {
 			} 
 			return doc;
 		}
-
+		public void verify(Document doc) {
+			boolean res = verifySignature(doc);
+			System.out.println("\nVerification = " + res);
+		}
+		
+		private static boolean verifySignature(Document doc) {
+			try {
+				//Pronalazi se prvi Signature element
+				NodeList signatures = doc.getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature");
+				Element signatureEl = (Element) signatures.item(0);
+				
+				//kreira se signature objekat od elementa
+				XMLSignature signature = new XMLSignature(signatureEl, null);
+				
+				//preuzima se key info
+				KeyInfo keyInfo = signature.getKeyInfo();
+				
+				//ako postoji
+				if(keyInfo != null) {
+					//registruju se resolver-i za javni kljuc i sertifikat
+					keyInfo.registerInternalKeyResolver(new RSAKeyValueResolver());
+				    keyInfo.registerInternalKeyResolver(new X509CertificateResolver());
+				    
+				    //ako sadrzi sertifikat
+				    if(keyInfo.containsX509Data() && keyInfo.itemX509Data(0).containsCertificate()) { 
+				    	X509Certificate  cert =(X509Certificate) readCertificate();
+				        //ako postoji sertifikat, provera potpisa
+				        if(cert != null) {
+				        	//return signature.checkSignatureValue((X509Certificate) cert);
+				        	if(signature.checkSignatureValue((X509Certificate) cert))
+				        		return true;
+				        	else 
+				        		return false;
+				        }
+				        else
+				        	return false;
+				    }
+				    else
+				    	return false;
+				}
+				else
+					return false;
+			
+			} catch (XMLSignatureException e) {
+				e.printStackTrace();
+				return false;
+			} catch (XMLSecurityException e) {
+				e.printStackTrace();
+				return false;
+			}
+		}
+		private static X509Certificate readCertificate() {
+			try {
+				//kreiramo instancu KeyStore
+				KeyStore ks = KeyStore.getInstance("JKS", "SUN");
+				
+				//ucitavamo podatke
+				BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_B_JKS));
+				ks.load(in, userBPass.toCharArray());
+				
+				if(ks.isKeyEntry(userBAlias)) {
+					X509Certificate  cert =(X509Certificate ) ks.getCertificate(userAAlias);
+					return cert;
+				}
+				else
+					return null;
+				
+			} catch (KeyStoreException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchProviderException e) {
+				e.printStackTrace();
+				return null;
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+				return null;
+			} catch (CertificateException e) {
+				e.printStackTrace();
+				return null;
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			} 
+		}
 }

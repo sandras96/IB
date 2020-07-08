@@ -1,14 +1,25 @@
 package app;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.StringWriter;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.NoSuchProviderException;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Security;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.text.ParseException;
 
 import javax.crypto.BadPaddingException;
@@ -20,6 +31,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.mail.internet.MimeMessage;
+import javax.xml.crypto.dsig.XMLSignatureException;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.transform.OutputKeys;
@@ -30,11 +42,17 @@ import javax.xml.transform.dom.DOMSource;
 import javax.xml.transform.stream.StreamResult;
 
 import org.apache.xml.security.encryption.XMLCipher;
+import org.apache.xml.security.exceptions.XMLSecurityException;
 import org.apache.xml.security.encryption.EncryptedData;
 import org.apache.xml.security.encryption.EncryptedKey;
 import org.apache.xml.security.keys.KeyInfo;
+import org.apache.xml.security.signature.XMLSignature;
+import org.apache.xml.security.transforms.TransformationException;
+import org.apache.xml.security.transforms.Transforms;
+import org.apache.xml.security.utils.Constants;
 import org.bouncycastle.jcajce.provider.asymmetric.RSA;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.w3c.dom.DOMException;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 
@@ -56,7 +74,9 @@ public class WriteMailClient extends MailClient {
 	 * IV2_FILE = "./data/iv2.bin"; private static short BLOCK_SIZE = 16;
 	 */
 	private static final String USER_A_JKS = "./data/usera.jks";
+	private static final String USER_B_JKS = "./data/userb.jks";
 	private static final String userBAlias = "userb";
+	private static final String userAAlias = "usera";
 	private static final String userBPass = "b";
 	private static final String userAPass = "a";
 
@@ -152,6 +172,11 @@ public class WriteMailClient extends MailClient {
 
 			// postavljanje KeyInfo za element koji se kriptuje
 			encryptedData.setKeyInfo(keyInfo);
+			
+			// potpisivanje dokumenta
+			WriteMailClient sign = new WriteMailClient();
+			sign.signingDocument(doc);
+			
 			
 			//kriptovati sadrzaj dokumenta
 			xmlCipher.doFinal(doc, rootElement, true);
@@ -314,6 +339,132 @@ public class WriteMailClient extends MailClient {
 				e.printStackTrace();
 			}
 			return null;
+		}
+		
+		private static PrivateKey getPrivateKey() {
+			try {
+				KeyStore keyStore = KeyStore.getInstance("JKS", "SUN");
+				// ucitavanje keyStore
+				BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_A_JKS));
+				keyStore.load(in, userAPass.toCharArray());
+
+				if (keyStore.isKeyEntry(userAAlias)) {
+					PrivateKey privateKey = (PrivateKey) keyStore.getKey(userAAlias, userAPass.toCharArray());
+					return privateKey;
+				} else
+					return null;
+			} catch (KeyStoreException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchProviderException e) {
+				e.printStackTrace();
+				return null;
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+				return null;
+			} catch (CertificateException e) {
+				e.printStackTrace();
+				return null;
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			} catch (UnrecoverableKeyException e) {
+				e.printStackTrace();
+				return null;
+			}
+		}
+
+		private void signingDocument(Document doc) {
+			PrivateKey privateKey = getPrivateKey();
+			Certificate cert = getCertificate();
+			System.out.println("Signing....");
+			doc = signDocument(doc, privateKey, cert);
+		}
+		
+		private Document signDocument(Document doc, PrivateKey privateKey, Certificate cert) {
+			try {
+				Element rootEl = doc.getDocumentElement();
+
+				// kreira se signature objekat
+				XMLSignature sig = new XMLSignature(doc, null, XMLSignature.ALGO_ID_SIGNATURE_RSA_SHA1);
+				// kreiraju se transformacije nad dokumentom
+				Transforms transforms = new Transforms(doc);
+
+				// iz potpisa uklanja Signature element
+				// Ovo je potrebno za enveloped tip po specifikaciji
+				transforms.addTransform(Transforms.TRANSFORM_ENVELOPED_SIGNATURE);
+				// normalizacija, canonicalization (C14N)
+				transforms.addTransform(Transforms.TRANSFORM_C14N_WITH_COMMENTS);
+
+				// potpisuje se citav dokument (URI "")
+				sig.addDocument("", transforms, Constants.ALGO_ID_DIGEST_SHA1);
+
+				// U KeyInfo se postavalja Javni kljuc samostalno i citav sertifikat
+				sig.addKeyInfo(cert.getPublicKey());
+				sig.addKeyInfo((X509Certificate) cert);
+				System.out.println("sign: " + sig);
+				System.out.println("sig.keyinfo " + sig.getKeyInfo());
+
+				// poptis je child root elementa
+				rootEl.appendChild(sig.getElement());
+				System.out.println("sign pre kriptovanja: " + sig);
+
+				System.out.println("sign signature: " + sig.getSignatureValue());
+				// potpisivanje
+				sig.sign(privateKey);
+				System.out.println("sign kriptovani: " + sig);
+
+				return doc;
+			} catch (TransformationException e) {
+				e.printStackTrace();
+				return null;
+			}  catch (DOMException e) {
+				e.printStackTrace();
+				return null;
+			} catch (XMLSecurityException e) {
+				e.printStackTrace();
+				return null;
+			}
+		}
+
+		private Certificate getCertificate() {
+			try {
+				// kreiramo instancu KeyStore
+				KeyStore ks = KeyStore.getInstance("JKS", "SUN");
+				// ucitavamo podatke
+				BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_B_JKS));
+				ks.load(in, userBPass.toCharArray());
+
+				if (ks.isKeyEntry(userBAlias)) {
+					Certificate cert = (Certificate) ks.getCertificate(userAAlias);
+				//	System.out.println("cert " + cert.getSignature());
+					return cert;
+
+				} else
+					return null;
+
+			} catch (KeyStoreException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchProviderException e) {
+				e.printStackTrace();
+				return null;
+			} catch (FileNotFoundException e) {
+				e.printStackTrace();
+				return null;
+			} catch (NoSuchAlgorithmException e) {
+				e.printStackTrace();
+				return null;
+			} catch (CertificateException e) {
+				e.printStackTrace();
+				return null;
+			} catch (IOException e) {
+				e.printStackTrace();
+				return null;
+			}
 		}
 
 }
