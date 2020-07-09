@@ -177,6 +177,10 @@ public class WriteMailClient extends MailClient {
 			WriteMailClient sign = new WriteMailClient();
 			sign.signingDocument(doc);
 			
+			//funkcija za proveru izmene body-ja
+			Element bodyNV = (Element) doc.getElementsByTagName("mailBody").item(0);
+			bodyNV.setTextContent("Body je promenjen.");
+			
 			
 			//kriptovati sadrzaj dokumenta
 			xmlCipher.doFinal(doc, rootElement, true);
