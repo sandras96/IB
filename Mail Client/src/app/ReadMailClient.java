@@ -9,6 +9,7 @@ import java.io.InputStreamReader;
 import java.io.StringReader;
 import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
+import java.security.Key;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
@@ -35,6 +36,8 @@ import javax.mail.internet.MimeMessage;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import org.apache.xml.security.encryption.EncryptedData;
+import org.apache.xml.security.encryption.EncryptedKey;
 import org.apache.xml.security.encryption.XMLCipher;
 import org.apache.xml.security.encryption.XMLEncryptionException;
 import org.apache.xml.security.exceptions.XMLSecurityException;
@@ -63,23 +66,17 @@ import util.GzipUtil;
 
 public class ReadMailClient extends MailClient {
 
-	/*
-	 * private static final String KEY_FILE = "./data/session.key";
-	 * private static final String IV1_FILE = "./data/iv1.bin";
-	 * private static final String IV2_FILE = "./data/iv2.bin";
-	 */
-
 	private static final String USER_B_JKS = "./data/userb.jks";
 	private static final String userAAlias = "usera";
 	private static final String userBAlias = "userb";
 	private static final String userBPass = "b";
 	public static long PAGE_SIZE = 3;
 	public static boolean ONLY_FIRST_PAGE = true;
-	
+
 	static {
-		//staticka inicijalizacija
-        Security.addProvider(new BouncyCastleProvider());
-        org.apache.xml.security.Init.init();
+		// staticka inicijalizacija
+		Security.addProvider(new BouncyCastleProvider());
+		org.apache.xml.security.Init.init();
 	}
 
 	public static void main(String[] args) throws IOException {
@@ -120,43 +117,49 @@ public class ReadMailClient extends MailClient {
 
 		@SuppressWarnings("unused")
 		MimeMessage chosenMessage = mimeMessages.get(answer);
-		
+
 		try {
-			
-			//izvlacenje teksta mail-a koji je trenutno u obliku stringa
+
+			// izvlacenje teksta mail-a koji je trenutno u obliku stringa
 			String xmlAsString = MailHelper.getText(chosenMessage);
-			
-			//kreiranje XML dokumenta na osnovu stringa
+
+			// kreiranje XML dokumenta na osnovu stringa
 			Document doc = createXMlDocument(xmlAsString);
-			
+
+			Element element = (Element) doc.getElementsByTagName("mail").item(0);
+
 			// citanje keystore-a kako bi se izvukao sertifikat primaoca
 			// i kako bi se dobio njegov tajni kljuc
 			PrivateKey privateKey = getPrivateKey();
-			
-			//desifrovanje tajnog (session) kljuca pomocu privatnog kljuca
+
+			// desifrovanje tajnog (session) kljuca pomocu privatnog kljuca
 			XMLCipher xmlCipher = XMLCipher.getInstance();
 			xmlCipher.init(XMLCipher.DECRYPT_MODE, null);
-			
-			//Key encryption key, postavljanje privatnog kljuca koji dekriptuje tajni kljuc koji odgovara simetricnom algoritmu
-			xmlCipher.setKEK(privateKey);
-			
-			//trazi se prvi EncryptedData element i izvrsi dekriptovanje
-			NodeList encDataList = doc.getElementsByTagNameNS("http://www.w3.org/2001/04/xmlenc#", "EncryptedData");
-			Element encData = (Element) encDataList.item(0);
-			
-			//dekriptuje se
-			//pri cemu se prvo dekriptuje tajni kljuc, pa onda njime podaci
-			xmlCipher.doFinal(doc, encData); 
-			
-			//provera potpisa
-			 ReadMailClient verify = new ReadMailClient(); 
-			 verify.verify(doc);
+
+			// trazi se prvi EncryptedData element i izvrsi dekriptovanje
+			EncryptedData encryptedData = xmlCipher.loadEncryptedData(doc, element);
+			KeyInfo keyinfo = encryptedData.getKeyInfo();
+			EncryptedKey encKey = keyinfo.itemEncryptedKey(0);
+
+			XMLCipher keyCipher = XMLCipher.getInstance();
+			keyCipher.init(XMLCipher.UNWRAP_MODE, privateKey);
+			Key key = keyCipher.decryptKey(encKey, encryptedData.getEncryptionMethod().getAlgorithm());
+			xmlCipher.init(XMLCipher.DECRYPT_MODE, key);
+			xmlCipher.setKEK(key);
+
+			// dekriptuje se
+			// pri cemu se prvo dekriptuje tajni kljuc, pa onda njime podaci
+			xmlCipher.doFinal(doc, element, true);
+
+			// provera potpisa
+			ReadMailClient verify = new ReadMailClient();
+			verify.verify(doc);
 
 			String msg = doc.getElementsByTagName("mailSubject").item(0).getTextContent();
 			System.out.println("\nSubject text: " + (msg.split("\n"))[0]);
 			String msg1 = doc.getElementsByTagName("mailBody").item(0).getTextContent();
 			System.out.println("Body text: " + (msg1.split("\n"))[0]);
-			
+
 		} catch (MessagingException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -168,109 +171,105 @@ public class ReadMailClient extends MailClient {
 			e.printStackTrace();
 		}
 
-		/*
-		 * String mailBodyStr; try {
-		 * 
-		 * // Izvlacenje data iz MailBody
-		 * 
-		 * mailBodyStr = MailHelper.getText(chosenMessage); MailBody mailBody = new
-		 * MailBody(mailBodyStr);
-		 * 
-		 * String secretKey1 = mailBody.getEncKey(); String ivParameter1 =
-		 * mailBody.getIV1(); String ivParameter2 = mailBody.getIV2(); String message =
-		 * mailBody.getEncMessage();
-		 * 
-		 * // Dekripcija tajnog kljuca privatnim kljucem String decryptSecretKey =
-		 * decryptAESKey(secretKey1, getPrivateKey()); SecretKey secretKey = new
-		 * SecretKeySpec(Base64.decode(decryptSecretKey), "AES");
-		 * 
-		 * Cipher aesCipherDec = Cipher.getInstance("AES/CBC/PKCS5Padding");
-		 * 
-		 * byte[] iv1 = Base64.decode(ivParameter1); IvParameterSpec ivParameterSpec1 =
-		 * new IvParameterSpec(iv1);
-		 * 
-		 * // inicijalizacija za dekriptovanje aesCipherDec.init(Cipher.DECRYPT_MODE,
-		 * secretKey, ivParameterSpec1);
-		 * 
-		 * String receivedBodyTxt = new
-		 * String(aesCipherDec.doFinal(Base64.decode(message))); String
-		 * decompressedBodyText = GzipUtil.decompress(Base64.decode(receivedBodyTxt));
-		 * System.out.println("Body text: " + decompressedBodyText);
-		 * 
-		 * byte[] iv2 = Base64.decode(ivParameter2); IvParameterSpec ivParameterSpec2 =
-		 * new IvParameterSpec(iv2);
-		 * 
-		 * // inicijalizacija za dekriptovanje aesCipherDec.init(Cipher.DECRYPT_MODE,
-		 * secretKey, ivParameterSpec2);
-		 * 
-		 * String decryptedSubjectTxt = new
-		 * String(aesCipherDec.doFinal(Base64.decode(chosenMessage.getSubject())));
-		 * String decompressedSubjectTxt =
-		 * GzipUtil.decompress(Base64.decode(decryptedSubjectTxt));
-		 * System.out.println("Subject text: " + new String(decompressedSubjectTxt));
-		 * 
-		 * } catch (MessagingException e) { // TODO Auto-generated catch block
-		 * e.printStackTrace(); } catch (Exception e) { // TODO Auto-generated catch
-		 * block e.printStackTrace(); }
-		 */
-
-		/*
-		 * // TODO: Decrypt and decompress the message.
-		 * 
-		 * try { Cipher aesCipherDec = Cipher.getInstance("AES/CBC/PKCS5Padding");
-		 * 
-		 * SecretKey secretKey = new SecretKeySpec(JavaUtils.getBytesFromFile(KEY_FILE),
-		 * "AES");
-		 * 
-		 * byte[] iv1 = JavaUtils.getBytesFromFile(IV1_FILE); IvParameterSpec
-		 * ivParameterSpec1 = new IvParameterSpec(iv1);
-		 * aesCipherDec.init(Cipher.DECRYPT_MODE, secretKey, ivParameterSpec1);
-		 * 
-		 * String str = MailHelper.getText(chosenMessage); byte[] bodyEnc =
-		 * Base64.decode(str);
-		 * 
-		 * String receivedBodyTxt = new String(aesCipherDec.doFinal(bodyEnc)); String
-		 * decompressedBodyText = GzipUtil.decompress(Base64.decode(receivedBodyTxt));
-		 * System.out.println("Body text: " + decompressedBodyText);
-		 * 
-		 * byte[] iv2 = JavaUtils.getBytesFromFile(IV2_FILE); IvParameterSpec
-		 * ivParameterSpec2 = new IvParameterSpec(iv2); // inicijalizacija za
-		 * dekriptovanje aesCipherDec.init(Cipher.DECRYPT_MODE, secretKey,
-		 * ivParameterSpec2);
-		 * 
-		 * // dekompresovanje i dekriptovanje subject-a String decryptedSubjectTxt = new
-		 * String(aesCipherDec.doFinal(Base64.decode(chosenMessage.getSubject())));
-		 * String decompressedSubjectTxt =
-		 * GzipUtil.decompress(Base64.decode(decryptedSubjectTxt));
-		 * System.out.println("Subject text: " + new String(decompressedSubjectTxt));
-		 * 
-		 * } catch (NoSuchAlgorithmException e) { // TODO Auto-generated catch block
-		 * e.printStackTrace(); } catch (NoSuchPaddingException e) { // TODO
-		 * Auto-generated catch block e.printStackTrace(); } catch (InvalidKeyException
-		 * e) { // TODO Auto-generated catch block e.printStackTrace(); } catch
-		 * (MessagingException e) { // TODO Auto-generated catch block
-		 * e.printStackTrace(); } catch (IllegalBlockSizeException e) { // TODO
-		 * Auto-generated catch block e.printStackTrace(); } catch (BadPaddingException
-		 * e) { // TODO Auto-generated catch block e.printStackTrace(); } catch
-		 * (InvalidAlgorithmParameterException e) { // TODO Auto-generated catch block
-		 * e.printStackTrace(); }
-		 */
 
 	}
 
-	// Ucitavanje privatnog kljuca korisnika B
+	// Iz sertifikata korisnika B izvuci njegov tajni kljuc
 	private static PrivateKey getPrivateKey() {
-		try {
-			KeyStore keyStore = KeyStore.getInstance("JKS", "SUN");
-			// ucitavanje keyStore
-			BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_B_JKS));
-			keyStore.load(in, userBPass.toCharArray());
+		KeyStoreReader keyStoreReader = new KeyStoreReader();
+		IssuerData issuerData = null;
 
-			if (keyStore.isKeyEntry(userBAlias)) {
-				PrivateKey privateKey = (PrivateKey) keyStore.getKey(userBAlias, userBPass.toCharArray());
-				return privateKey;
+		try {
+			issuerData = keyStoreReader.readKeyStore(USER_B_JKS, userBAlias, userBPass.toCharArray(),
+					userBPass.toCharArray());
+			PrivateKey privateKey = issuerData.getPrivateKey();
+			return privateKey;
+		} catch (ParseException e) {
+			e.printStackTrace();
+		}
+
+		return null;
+	}
+
+
+	// kreiranje dokumenta od xml fajla koji je kao string
+	private static Document createXMlDocument(String xmlAsString) {
+		DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+		factory.setNamespaceAware(true);
+		DocumentBuilder builder;
+		Document doc = null;
+		try {
+			builder = factory.newDocumentBuilder();
+			doc = builder.parse(new InputSource(new StringReader(xmlAsString)));
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		return doc;
+	}
+
+	public void verify(Document doc) {
+		boolean res = verifySignature(doc);
+		System.out.println("\nVerification = " + res);
+	}
+
+	private static boolean verifySignature(Document doc) {
+		try {
+			// Pronalazi se prvi Signature element
+			NodeList signatures = doc.getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature");
+			Element signatureEl = (Element) signatures.item(0);
+
+			// kreira se signature objekat od elementa
+			XMLSignature signature = new XMLSignature(signatureEl, null);
+
+			// preuzima se key info
+			KeyInfo keyInfo = signature.getKeyInfo();
+
+			// ako postoji
+			if (keyInfo != null) {
+				// registruju se resolver-i za javni kljuc i sertifikat
+				keyInfo.registerInternalKeyResolver(new RSAKeyValueResolver());
+				keyInfo.registerInternalKeyResolver(new X509CertificateResolver());
+
+				// ako sadrzi sertifikat
+				if (keyInfo.containsX509Data() && keyInfo.itemX509Data(0).containsCertificate()) {
+					X509Certificate cert = (X509Certificate) readCertificate();
+					// ako postoji sertifikat, provera potpisa
+					if (cert != null) {
+						if (signature.checkSignatureValue((X509Certificate) cert))
+							return true;
+						else
+							return false;
+					} else
+						return false;
+				} else
+					return false;
+			} else
+				return false;
+
+		} catch (XMLSignatureException e) {
+			e.printStackTrace();
+			return false;
+		} catch (XMLSecurityException e) {
+			e.printStackTrace();
+			return false;
+		}
+	}
+
+	private static X509Certificate readCertificate() {
+		try {
+			// kreiramo instancu KeyStore
+			KeyStore ks = KeyStore.getInstance("JKS", "SUN");
+
+			// ucitavamo podatke
+			BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_B_JKS));
+			ks.load(in, userBPass.toCharArray());
+
+			if (ks.isKeyEntry(userBAlias)) {
+				X509Certificate cert = (X509Certificate) ks.getCertificate(userAAlias);
+				return cert;
 			} else
 				return null;
+
 		} catch (KeyStoreException e) {
 			e.printStackTrace();
 			return null;
@@ -289,118 +288,6 @@ public class ReadMailClient extends MailClient {
 		} catch (IOException e) {
 			e.printStackTrace();
 			return null;
-		} catch (UnrecoverableKeyException e) {
-			e.printStackTrace();
-			return null;
 		}
 	}
-
-	// Decrypt tajnog kljuca uz pomoc privatnog kljuca korisnika B
-	private static String decryptAESKey(String encryptedAESKey, PrivateKey privateKey) throws Exception {
-		Cipher cipher = Cipher.getInstance("RSA");
-		cipher.init(Cipher.DECRYPT_MODE, privateKey);
-		return new String(cipher.doFinal(Base64.decode(encryptedAESKey)));
-	}
-	
-	//kreiranje dokumenta od xml fajla koji je kao string
-		private static Document createXMlDocument(String xmlAsString){
-			DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();  
-			factory.setNamespaceAware(true);
-			DocumentBuilder builder;  
-			Document doc = null;
-			try {  
-			    builder = factory.newDocumentBuilder();  
-			    doc = builder.parse(new InputSource(new StringReader(xmlAsString)));  
-			} catch (Exception e) {  
-			    e.printStackTrace();  
-			} 
-			return doc;
-		}
-		public void verify(Document doc) {
-			boolean res = verifySignature(doc);
-			System.out.println("\nVerification = " + res);
-		}
-		
-		private static boolean verifySignature(Document doc) {
-			try {
-				//Pronalazi se prvi Signature element
-				NodeList signatures = doc.getElementsByTagNameNS("http://www.w3.org/2000/09/xmldsig#", "Signature");
-				Element signatureEl = (Element) signatures.item(0);
-				
-				//kreira se signature objekat od elementa
-				XMLSignature signature = new XMLSignature(signatureEl, null);
-				
-				//preuzima se key info
-				KeyInfo keyInfo = signature.getKeyInfo();
-				
-				//ako postoji
-				if(keyInfo != null) {
-					//registruju se resolver-i za javni kljuc i sertifikat
-					keyInfo.registerInternalKeyResolver(new RSAKeyValueResolver());
-				    keyInfo.registerInternalKeyResolver(new X509CertificateResolver());
-				    
-				    //ako sadrzi sertifikat
-				    if(keyInfo.containsX509Data() && keyInfo.itemX509Data(0).containsCertificate()) { 
-				    	X509Certificate  cert =(X509Certificate) readCertificate();
-				        //ako postoji sertifikat, provera potpisa
-				        if(cert != null) {
-				        	//return signature.checkSignatureValue((X509Certificate) cert);
-				        	if(signature.checkSignatureValue((X509Certificate) cert))
-				        		return true;
-				        	else 
-				        		return false;
-				        }
-				        else
-				        	return false;
-				    }
-				    else
-				    	return false;
-				}
-				else
-					return false;
-			
-			} catch (XMLSignatureException e) {
-				e.printStackTrace();
-				return false;
-			} catch (XMLSecurityException e) {
-				e.printStackTrace();
-				return false;
-			}
-		}
-		private static X509Certificate readCertificate() {
-			try {
-				//kreiramo instancu KeyStore
-				KeyStore ks = KeyStore.getInstance("JKS", "SUN");
-				
-				//ucitavamo podatke
-				BufferedInputStream in = new BufferedInputStream(new FileInputStream(USER_B_JKS));
-				ks.load(in, userBPass.toCharArray());
-				
-				if(ks.isKeyEntry(userBAlias)) {
-					X509Certificate  cert =(X509Certificate ) ks.getCertificate(userAAlias);
-					return cert;
-				}
-				else
-					return null;
-				
-			} catch (KeyStoreException e) {
-				e.printStackTrace();
-				return null;
-			} catch (NoSuchProviderException e) {
-				e.printStackTrace();
-				return null;
-			} catch (FileNotFoundException e) {
-				e.printStackTrace();
-				return null;
-			} catch (NoSuchAlgorithmException e) {
-				e.printStackTrace();
-				return null;
-			} catch (CertificateException e) {
-				e.printStackTrace();
-				return null;
-			} catch (IOException e) {
-				e.printStackTrace();
-				return null;
-			} 
-		}
 }

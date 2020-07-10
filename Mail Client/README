@@ -1,0 +1,4 @@
+#Uputstvo za koriscenje aplikacije:
+#Pokrece se prvo WriteMailClient.java i salje se poruka
+#Zatim se pokrece ReadMailClient.java koja prima poruku
+#Funkcija za detektovanje neregularne poruke je pod komentarom u WriteMailClient.java

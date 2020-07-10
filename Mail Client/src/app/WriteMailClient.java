@@ -68,11 +68,6 @@ import util.Base64;
 
 public class WriteMailClient extends MailClient {
 
-	/*
-	 * private static final String KEY_FILE = "./data/session.key"; private static
-	 * final String IV1_FILE = "./data/iv1.bin"; private static final String
-	 * IV2_FILE = "./data/iv2.bin"; private static short BLOCK_SIZE = 16;
-	 */
 	private static final String USER_A_JKS = "./data/usera.jks";
 	private static final String USER_B_JKS = "./data/userb.jks";
 	private static final String userBAlias = "userb";
@@ -80,16 +75,6 @@ public class WriteMailClient extends MailClient {
 	private static final String userBPass = "b";
 	private static final String userAPass = "a";
 
-	/*
-	 * // kreiranje kljuca private static SecretKey generateKey() { try { //
-	 * generator para kljuceva za AES algoritam KeyGenerator keyGen =
-	 * KeyGenerator.getInstance("AES"); // generise kljuc za AES, defaultne velicine
-	 * od 128 bita SecretKey secretKey = keyGen.generateKey(); return secretKey;
-	 * 
-	 * } catch (NoSuchAlgorithmException e) { e.printStackTrace(); }
-	 * 
-	 * return null; }
-	 */
 	static {
 		// staticka inicijalizacija
 		Security.addProvider(new BouncyCastleProvider());
@@ -136,7 +121,6 @@ public class WriteMailClient extends MailClient {
 			// generisanje tajnog (session) kljuca
 			SecretKey secretKey = generateKey();
 			
-			
 			// citanje keystore-a kako bi se izvukao sertifikat primaoca
 			// i kako bi se dobio njegov javni kljuc
 			PublicKey publicKey = getPublicKey();
@@ -159,7 +143,6 @@ public class WriteMailClient extends MailClient {
 			// kreiranje EncryptedData objekta
 			// ovaj element je koreni element XMl enkripcije
 			EncryptedData encryptedData = xmlCipher.getEncryptedData();
-										//sifruje se sam dokument kao takav
 			
 			// kreiranje KeyInfo objekta, podaci o samom kljucu
 			KeyInfo keyInfo = new KeyInfo(doc);
@@ -178,9 +161,10 @@ public class WriteMailClient extends MailClient {
 			sign.signingDocument(doc);
 			
 			//funkcija za proveru izmene body-ja
-			Element bodyNV = (Element) doc.getElementsByTagName("mailBody").item(0);
-			bodyNV.setTextContent("Body je promenjen.");
-			
+			/*
+			 * Element bodyNV = (Element) doc.getElementsByTagName("mailBody").item(0);
+			 * bodyNV.setTextContent("Body je promenjen.");
+			 */
 			
 			//kriptovati sadrzaj dokumenta
 			xmlCipher.doFinal(doc, rootElement, true);
@@ -193,63 +177,8 @@ public class WriteMailClient extends MailClient {
 			
 			MimeMessage mimeMessage = MailHelper.createMimeMessage(reciever, cipherSubject, encryptedXml);
 			MailWritter.sendMessage(service, "me", mimeMessage);
+			System.out.println("Sent");
 			
-			/*
-			 * // TODO: Compress and encrypt the content before sending.
-			 * 
-			 * // compress String compressedSubject =
-			 * Base64.encodeToString(GzipUtil.compress(subject)); String compressedText =
-			 * Base64.encodeToString(GzipUtil.compress(text));
-			 * 
-			 * // generate Key SecretKey secretKey = generateKey();
-			 * 
-			 * String encodedKey = Base64.encodeToString(secretKey.getEncoded());
-			 * 
-			 * // javni kljuc korisnika B PublicKey publicKey = getPublicKey();
-			 * 
-			 * // klasa za sifrovanje Cipher aesCipherEnc =
-			 * Cipher.getInstance("AES/CBC/PKCS5Padding");
-			 * 
-			 * // inicijalizacija za sifrovanje IvParameterSpec ivParameterSpec1 =
-			 * IVHelper.createIV(); aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey,
-			 * ivParameterSpec1);
-			 * 
-			 * // sifrovanje byte[] ciphertext =
-			 * aesCipherEnc.doFinal(compressedText.getBytes()); String ciphertextStr =
-			 * Base64.encodeToString(ciphertext); System.out.println("Kriptovan tekst: " +
-			 * ciphertextStr);
-			 * 
-			 * // inicijalizacija za sifrovanje IvParameterSpec ivParameterSpec2 =
-			 * IVHelper.createIV(); aesCipherEnc.init(Cipher.ENCRYPT_MODE, secretKey,
-			 * ivParameterSpec2);
-			 * 
-			 * // sifrovanje byte[] ciphersubject =
-			 * aesCipherEnc.doFinal(compressedSubject.getBytes()); String ciphersubjectStr =
-			 * Base64.encodeToString(ciphersubject);
-			 * System.out.println("Kriptovan subject: " + ciphersubjectStr);
-			 * 
-			 * // enkripcija privatnog kljuca javnim kljucem String encryptedAESKeyString =
-			 * encryptAESKey(encodedKey, publicKey);
-			 * 
-			 * // String message = ciphersubjectStr + ciphertextStr;
-			 * 
-			 * MailBody mailBody = new MailBody(ciphertextStr,
-			 * Base64.encodeToString(ivParameterSpec1.getIV()),
-			 * Base64.encodeToString(ivParameterSpec2.getIV()), encryptedAESKeyString);
-			 * String mailBody1 = mailBody.toCSV();
-			 * 
-			 * 
-			 * // snimanje kljuca i IV JavaUtils.writeBytesToFilename(KEY_FILE,
-			 * secretKey.getEncoded()); JavaUtils.writeBytesToFilename(IV1_FILE,
-			 * ivParameterSpec1.getIV()); JavaUtils.writeBytesToFilename(IV2_FILE,
-			 * ivParameterSpec2.getIV());
-			 * 
-			 * 
-			 * MimeMessage mimeMessage = MailHelper.createMimeMessage(reciever,
-			 * ciphersubjectStr, mailBody1); MailWritter.sendMessage(service, "me",
-			 * mimeMessage);
-			 */
-
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
@@ -271,12 +200,6 @@ public class WriteMailClient extends MailClient {
 
 	}
 
-	// Encrypt AES private Key using RSA public key
-	private static String encryptAESKey(String encryptedAESKey, PublicKey publicKey) throws Exception {
-		Cipher cipher = Cipher.getInstance("RSA");
-		cipher.init(Cipher.ENCRYPT_MODE, publicKey);
-		return Base64.encodeToString(cipher.doFinal(encryptedAESKey.getBytes()));
-	}
 	
 	//transformacija dokumenta u xml fajl kao string
 		private static String xmlAsString(Document doc) throws TransformerException {
@@ -383,12 +306,12 @@ public class WriteMailClient extends MailClient {
 
 		private void signingDocument(Document doc) {
 			PrivateKey privateKey = getPrivateKey();
-			Certificate cert = getCertificate();
+			X509Certificate cert = getCertificate();
 			System.out.println("Signing....");
 			doc = signDocument(doc, privateKey, cert);
 		}
 		
-		private Document signDocument(Document doc, PrivateKey privateKey, Certificate cert) {
+		private Document signDocument(Document doc, PrivateKey privateKey, X509Certificate cert) {
 			try {
 				Element rootEl = doc.getDocumentElement();
 
@@ -408,7 +331,7 @@ public class WriteMailClient extends MailClient {
 
 				// U KeyInfo se postavalja Javni kljuc samostalno i citav sertifikat
 				sig.addKeyInfo(cert.getPublicKey());
-				sig.addKeyInfo((X509Certificate) cert);
+				sig.addKeyInfo(cert);
 				System.out.println("sign: " + sig);
 				System.out.println("sig.keyinfo " + sig.getKeyInfo());
 
@@ -434,7 +357,7 @@ public class WriteMailClient extends MailClient {
 			}
 		}
 
-		private Certificate getCertificate() {
+		private X509Certificate getCertificate() {
 			try {
 				// kreiramo instancu KeyStore
 				KeyStore ks = KeyStore.getInstance("JKS", "SUN");
@@ -443,8 +366,8 @@ public class WriteMailClient extends MailClient {
 				ks.load(in, userBPass.toCharArray());
 
 				if (ks.isKeyEntry(userBAlias)) {
-					Certificate cert = (Certificate) ks.getCertificate(userAAlias);
-				//	System.out.println("cert " + cert.getSignature());
+					X509Certificate cert = (X509Certificate) ks.getCertificate(userAAlias);
+					System.out.println("cert " +  cert.getSignature());
 					return cert;
 
 				} else
